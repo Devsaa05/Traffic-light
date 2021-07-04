@@ -1,0 +1,121 @@
+// ***** 0. Documentation Section *****
+// Runs on TM4C123
+// Index implementation of a Moore finite state machine to operate a traffic light.
+//20 April 2021
+//Reference: http://users.ece.utexas.edu/~valvano/
+
+// "don't walk" red light connected to PA2
+// "walk" yellow light connected to PA3
+// east/west red light connected to PB5
+// east/west yellow light connected to PB4
+// east/west green light connected to PB3
+// north/south facing red light connected to PB2
+// north/south facing yellow light connected to PB1
+// north/south facing green light connected to PB0
+// pedestrian detector connected to PE2 (1=pedestrian present)
+// north/south car detector connected to PE1 (1=car present)
+// east/west car detector connected to PE0 (1=car present)
+
+// ***** 1. Pre-processor Directives Section *****
+
+#include "TM4C123GH6PM.h"
+
+// ***** 2. Global Declarations Section *****
+// FUNCTION PROTOTYPES: Each subroutine defined
+
+void SysTick_Init(void);                                     // initialize SysTick Timer
+void SysTick_Wait(unsigned long delay1);
+void SysTick_Wait10ms(unsigned long delay1);                // waiting time
+struct State{
+	unsigned long TrafficLights_Cars;                    //6 bits output to Six LEDs for Cars
+	unsigned long TrafficLights_Ped;                     //2 bits output to two Leds for Pedestrians
+	unsigned long Time;                                  //delay in 10ms units
+	unsigned long Next[8];                               //next states for inputs 0,1,2,3,4,5,6,7
+};
+typedef const struct State STyp;
+#define Go_West          0                                 //name of the states
+#define Wait_West        1
+#define Go_South         2
+#define Wait_South       3
+#define Walk_Ped         4
+#define Hurry_On_Ped1    5
+#define Hurry_Off_Ped1   6
+#define Hurry_On_Ped2    7
+#define Hurry_Off_Ped2   8
+
+//Next[8] array represents 8 inputs and the next state transition
+//The first array element represents 000 input, the second represents 001 input and so on upto 111 (eighth input)
+//Input bits representation- MSB=Walk Sensor,Middle bit=South Sensor and LSB=West Sensor
+//FSM[9]={
+//{ouput to Six signal LEDs (TrafficLights_Cars),output to two Pedestrian LEDs (TrafficLights_Ped),Time in 10ms units,Next[8] array elements(next states)},
+// ..............
+
+STyp FSM[9]={
+		{0x0C,0x04,100,{0,0,1,1,1,1,1,1}},        //state 1
+	  {0x14,0x04,50 ,{2,2,2,2,4,4,4,2}},             //state 2
+		{0x21,0x04,100,{2,3,2,3,3,3,3,3}},       //state 3
+		{0x22,0x04,50 ,{0,0,0,0,4,4,4,4}},       //state 4
+		{0x24,0x08,100,{4,5,5,5,4,5,5,5}},       //state 5
+		{0x24,0x04,25 ,{6,6,6,6,4,6,6,6}},       //state 6
+		{0x24,0x00,10 ,{7,7,7,7,4,7,7,7}},       //state 7
+		{0x24,0x04,25 ,{8,8,8,8,4,8,8,8}},       //state 8
+		{0x24,0x00,10 ,{0,0,2,0,4,0,2,0}}        //state 9
+
+};
+unsigned long S;                                       //index to the current state
+unsigned long Input;
+
+// ***** 3. Subroutines Section *****
+
+int main(void) {
+	volatile unsigned long delay;
+    SysTick_Init();
+	SYSCTL->RCGC2=0x13;                           //activate clock for port A,E,B
+	delay=SYSCTL->RCGC2;                          // no need to unlock port B,E,A
+	GPIOB->AMSEL=0x00;                       //disable analog on port B
+	GPIOE->AMSEL=0x00;                       //disable analog on port E
+	GPIOA->AMSEL=0x00;                       //disable analog on port A
+	GPIOB->PCTL=0x00000000;                  //enable regular GPIO
+	GPIOE->PCTL=0x00000000;                  //enable regular GPIO
+	GPIOA->PCTL=0x00000000;                  //enable regular GPIO
+	GPIOB->DIR=0x3F;                         //outputs on PB0-5
+	GPIOE->DIR=0x00;                         //inputs on PE0-2
+	GPIOA->DIR=0x0C;                         //outputs on PA2 and PA3
+	GPIOB->AFSEL=0x00;                       //disable alternate function
+	GPIOE->AFSEL=0x00;                       //disable alternate function
+	GPIOA->AFSEL=0x00;                       //disable alternate function
+	GPIOB->DEN=0x3F;                         //enable digital I/O on PB0-5
+	GPIOE->DEN=0x07;                         //enable digital I/O on PE0-2
+	GPIOA->DEN=0x0C;                                             //enable digital I/O on PA2 and PA3
+	S=Go_West;
+		while(1){
+			GPIOB->DATA=FSM[S].TrafficLights_Cars;       //set car signal lights
+			GPIOA->DATA=FSM[S].TrafficLights_Ped;        //set walk signal lights
+			SysTick_Wait10ms(FSM[S].Time); 
+			Input=GPIOE->DATA;                           //read sensors
+			S=FSM[S].Next[Input];
+			}
+
+}
+void SysTick_Init(void){
+  SysTick->LOAD = 0;                                                   // disable SysTick during setup
+  SysTick->VAL = 0x00000005;                                          // enable SysTick with core clock
+}
+
+// The delay parameter is in units of the 80 MHz core clock. (12.5 ns)
+
+void SysTick_Wait(unsigned long delay1){
+  SysTick->LOAD = delay1-1;                                          // number of counts to wait
+  SysTick->VAL = 0;                                                // any value written to CURRENT clears
+  while((SysTick->LOAD&0x00010000)==0){                                // wait for count flag
+  }
+}
+ 
+// 800000*12.5ns equals 10ms
+
+void SysTick_Wait10ms(unsigned long delay1){
+  unsigned long i;
+  for(i=0; i<delay1; i++){
+    SysTick_Wait(800000);                                              // wait 10ms
+  }
+}
